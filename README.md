@@ -12,6 +12,6 @@ Repo ini menyediakan skrip otomatis untuk menginstal dan menjalankan **VNC Serve
 - ✅ Otomatis generate password untuk VNC (bisa diatur manual juga)
 - ✅ Jalankan VNC server + noVNC dalam 1 perintah
 - ✅ Akses GUI dari browser via `http://ip:6080/vnv.html`
-- ✅ Auto install `firefox` browser
+- ✅ Auto install `Google Chrome` browser
 
 ---
