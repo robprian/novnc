@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Script to automatically install and configure VNC Server and NoVNC as services using LXDE
+# Script to automatically install and configure VNC Server and NoVNC with Google Chrome
 # Author: roprian
-# Version: 1.2.0
+# Version: 1.4.0
 
 set -e  # Exit on error
 
@@ -29,71 +29,76 @@ get_public_ip() {
     echo "$PUBLIC_IP"
 }
 
-# Function to install Firefox
-install_firefox() {
+# Function to install Google Chrome
+install_chrome() {
     local user=$1
     local user_home=$(eval echo ~$user)
+    local temp_dir=$(mktemp -d)
     
-    print_message "Installing Firefox for user $user..."
+    print_message "Installing Google Chrome for user $user..."
     
-    # Check if Firefox is already installed
-    if sudo -u $user which firefox &>/dev/null; then
-        echo "Firefox is already installed for $user"
+    # Check if Chrome is already installed
+    if sudo -u $user which google-chrome &>/dev/null || sudo -u $user which google-chrome-stable &>/dev/null; then
+        echo "Google Chrome is already installed for $user"
         return
     fi
 
-    # Detect distribution and install Firefox
-    if command -v apt-get &>/dev/null; then
-        # For Debian/Ubuntu
-        if ! $PKG_INSTALL firefox; then
-            echo "Failed to install Firefox via apt, trying snap..."
-            $PKG_INSTALL snapd
-            systemctl enable --now snapd.socket
-            snap install firefox
-            ln -s /snap/bin/firefox /usr/local/bin/firefox
-        fi
-    elif command -v dnf &>/dev/null; then
-        # For Fedora
-        $PKG_INSTALL firefox
-    elif command -v yum &>/dev/null; then
-        # For CentOS/RHEL
-        $PKG_INSTALL firefox
-    else
-        echo "Could not determine package manager to install Firefox"
+    # Install only on Debian/Ubuntu systems
+    if ! command -v apt-get &>/dev/null; then
+        echo "Google Chrome installation via .deb is only supported on Debian/Ubuntu systems"
+        return
+    fi
+
+    # Download and install Chrome
+    cd "$temp_dir"
+    if ! wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; then
+        echo "Failed to download Google Chrome package"
+        return
+    fi
+    
+    if ! dpkg -i google-chrome-stable_current_amd64.deb; then
+        echo "Installing dependencies for Google Chrome..."
+        apt-get --fix-broken install -y
+    fi
+    
+    # Verify installation
+    if ! sudo -u $user which google-chrome-stable &>/dev/null; then
+        echo "Google Chrome installation failed"
         return
     fi
 
     # Create desktop shortcut for LXDE
     if [ -d "$user_home/Desktop" ]; then
-        cat > "$user_home/Desktop/firefox.desktop" << 'EOF'
+        cat > "$user_home/Desktop/google-chrome.desktop" << 'EOF'
 [Desktop Entry]
 Version=1.0
-Name=Firefox Web Browser
-Comment=Browse the World Wide Web
-GenericName=Web Browser
-Keywords=Internet;WWW;Browser;Web;Explorer
-Exec=firefox %u
+Name=Google Chrome
+Comment=Access the Internet
+Exec=/usr/bin/google-chrome-stable %U
 Terminal=false
-X-MultipleArgs=false
+Icon=google-chrome
 Type=Application
-Icon=firefox
-Categories=GNOME;GTK;Network;WebBrowser;
-MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;image/gif;image/jpeg;image/png;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/ftp;x-scheme-handler/chrome;video/webm;application/x-xpinstall;
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/vnd.mozilla.xul+xml;text/mml;x-scheme-handler/http;x-scheme-handler/https;
 StartupNotify=true
 EOF
-        chown $user:$user "$user_home/Desktop/firefox.desktop"
-        chmod +x "$user_home/Desktop/firefox.desktop"
+        chown $user:$user "$user_home/Desktop/google-chrome.desktop"
+        chmod +x "$user_home/Desktop/google-chrome.desktop"
     fi
 
-    # Add Firefox to autostart if it's not already there
+    # Add Chrome to autostart
     if [ ! -d "$user_home/.config/autostart" ]; then
         sudo -u $user mkdir -p "$user_home/.config/autostart"
     fi
     
-    if [ ! -f "$user_home/.config/autostart/firefox.desktop" ]; then
-        cp "$user_home/Desktop/firefox.desktop" "$user_home/.config/autostart/"
-        chown $user:$user "$user_home/.config/autostart/firefox.desktop"
+    if [ ! -f "$user_home/.config/autostart/google-chrome.desktop" ]; then
+        cp "$user_home/Desktop/google-chrome.desktop" "$user_home/.config/autostart/"
+        chown $user:$user "$user_home/.config/autostart/google-chrome.desktop"
     fi
+
+    # Clean up
+    cd && rm -rf "$temp_dir"
+    echo "Google Chrome installed successfully"
 }
 
 # Check if running as root
@@ -125,7 +130,7 @@ if command -v apt-get &> /dev/null; then
     PKG_MANAGER="apt-get"
     PKG_UPDATE="apt-get update"
     PKG_INSTALL="apt-get install -y"
-    PACKAGES="tigervnc-standalone-server tigervnc-common novnc websockify git python3 python3-pip net-tools lxde-core lxterminal curl snapd"
+    PACKAGES="tigervnc-standalone-server tigervnc-common novnc websockify git python3 python3-pip net-tools lxde-core lxterminal curl wget"
 elif command -v dnf &> /dev/null; then
     PKG_MANAGER="dnf"
     PKG_UPDATE="dnf check-update"
@@ -157,8 +162,12 @@ else
     print_message "VNC server is already installed."
 fi
 
-# Install Firefox for the user
-install_firefox "$VNC_USER"
+# Install Google Chrome for the user (only on Debian/Ubuntu)
+if command -v apt-get &>/dev/null; then
+    install_chrome "$VNC_USER"
+else
+    echo "Note: Google Chrome installation via .deb is only supported on Debian/Ubuntu systems"
+fi
 
 # Check if NoVNC is installed
 if [ ! -d "/usr/share/novnc" ] && [ ! -d "/opt/novnc" ]; then
@@ -192,7 +201,7 @@ if [ ! -f "$VNC_USER_HOME/.vnc/passwd" ]; then
     sudo -u $VNC_USER vncpasswd
 fi
 
-# Create xstartup file for LXDE
+# Create xstartup file for LXDE with Chrome
 print_message "Creating LXDE xstartup configuration..."
 cat > "$VNC_USER_HOME/.vnc/xstartup" << 'EOF'
 #!/bin/bash
@@ -204,8 +213,12 @@ unset DBUS_SESSION_BUS_ADDRESS
 # Set display manually to :1
 export DISPLAY=:1
 
-# Start Firefox in the background
-[ -x "$(command -v firefox)" ] && firefox &
+# Start Google Chrome in the background if installed
+if command -v google-chrome-stable &>/dev/null; then
+    google-chrome-stable --no-sandbox &
+elif command -v google-chrome &>/dev/null; then
+    google-chrome --no-sandbox &
+fi
 
 # Start LXDE
 if command -v startlxde &> /dev/null; then
@@ -227,7 +240,7 @@ clean_x_processes() {
     pkill -9 -f "vnc.*:$DISPLAY_NUMBER" || true
     pkill -9 -f "X.*:$DISPLAY_NUMBER" || true
     pkill -9 -f "/usr/bin/X" || true
-    pkill -9 -f firefox || true
+    pkill -9 -f chrome || true
 
     # Remove lock files
     rm -f /tmp/.X$DISPLAY_NUMBER-lock || true
@@ -330,7 +343,7 @@ pkill -9 -f Xvnc || true
 pkill -9 -f "vnc.*:1" || true
 pkill -9 -f "X.*:1" || true
 pkill -9 -f "/usr/bin/X" || true
-pkill -9 -f firefox || true
+pkill -9 -f chrome || true
 
 echo "Removing lock files..."
 rm -f /tmp/.X1-lock || true
@@ -391,4 +404,5 @@ echo "  - Start NoVNC: systemctl start novnc.service"
 echo "  - Stop NoVNC: systemctl stop novnc.service"
 echo "  - Check status: systemctl status vncserver@$DISPLAY_NUMBER.service novnc.service"
 echo ""
-echo "Firefox has been installed and will start automatically with your VNC session"
+echo "Google Chrome has been installed and will start automatically with your VNC session"
+echo "Note: Chrome is running with --no-sandbox flag for VNC compatibility"
