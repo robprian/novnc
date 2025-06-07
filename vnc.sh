@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Script to automatically install and configure VNC Server and NoVNC as services using LXDE
-# Author: Claude
-# Date: May 22, 2025
+# Author: roprian
+# Version: 1.2.0
 
 set -e  # Exit on error
 
@@ -27,6 +27,73 @@ get_public_ip() {
     fi
     
     echo "$PUBLIC_IP"
+}
+
+# Function to install Firefox
+install_firefox() {
+    local user=$1
+    local user_home=$(eval echo ~$user)
+    
+    print_message "Installing Firefox for user $user..."
+    
+    # Check if Firefox is already installed
+    if sudo -u $user which firefox &>/dev/null; then
+        echo "Firefox is already installed for $user"
+        return
+    fi
+
+    # Detect distribution and install Firefox
+    if command -v apt-get &>/dev/null; then
+        # For Debian/Ubuntu
+        if ! $PKG_INSTALL firefox; then
+            echo "Failed to install Firefox via apt, trying snap..."
+            $PKG_INSTALL snapd
+            systemctl enable --now snapd.socket
+            snap install firefox
+            ln -s /snap/bin/firefox /usr/local/bin/firefox
+        fi
+    elif command -v dnf &>/dev/null; then
+        # For Fedora
+        $PKG_INSTALL firefox
+    elif command -v yum &>/dev/null; then
+        # For CentOS/RHEL
+        $PKG_INSTALL firefox
+    else
+        echo "Could not determine package manager to install Firefox"
+        return
+    fi
+
+    # Create desktop shortcut for LXDE
+    if [ -d "$user_home/Desktop" ]; then
+        cat > "$user_home/Desktop/firefox.desktop" << 'EOF'
+[Desktop Entry]
+Version=1.0
+Name=Firefox Web Browser
+Comment=Browse the World Wide Web
+GenericName=Web Browser
+Keywords=Internet;WWW;Browser;Web;Explorer
+Exec=firefox %u
+Terminal=false
+X-MultipleArgs=false
+Type=Application
+Icon=firefox
+Categories=GNOME;GTK;Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;application/xml;application/rss+xml;application/rdf+xml;image/gif;image/jpeg;image/png;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/ftp;x-scheme-handler/chrome;video/webm;application/x-xpinstall;
+StartupNotify=true
+EOF
+        chown $user:$user "$user_home/Desktop/firefox.desktop"
+        chmod +x "$user_home/Desktop/firefox.desktop"
+    fi
+
+    # Add Firefox to autostart if it's not already there
+    if [ ! -d "$user_home/.config/autostart" ]; then
+        sudo -u $user mkdir -p "$user_home/.config/autostart"
+    fi
+    
+    if [ ! -f "$user_home/.config/autostart/firefox.desktop" ]; then
+        cp "$user_home/Desktop/firefox.desktop" "$user_home/.config/autostart/"
+        chown $user:$user "$user_home/.config/autostart/firefox.desktop"
+    fi
 }
 
 # Check if running as root
@@ -58,7 +125,7 @@ if command -v apt-get &> /dev/null; then
     PKG_MANAGER="apt-get"
     PKG_UPDATE="apt-get update"
     PKG_INSTALL="apt-get install -y"
-    PACKAGES="tigervnc-standalone-server tigervnc-common novnc websockify git python3 python3-pip net-tools lxde-core lxterminal curl"
+    PACKAGES="tigervnc-standalone-server tigervnc-common novnc websockify git python3 python3-pip net-tools lxde-core lxterminal curl snapd"
 elif command -v dnf &> /dev/null; then
     PKG_MANAGER="dnf"
     PKG_UPDATE="dnf check-update"
@@ -78,6 +145,10 @@ fi
 print_message "Updating package repositories..."
 $PKG_UPDATE
 
+# Install basic packages
+print_message "Installing required packages..."
+$PKG_INSTALL $PACKAGES
+
 # Check if VNC server is already installed
 if ! command -v vncserver &> /dev/null; then
     print_message "Installing VNC server packages..."
@@ -85,6 +156,9 @@ if ! command -v vncserver &> /dev/null; then
 else
     print_message "VNC server is already installed."
 fi
+
+# Install Firefox for the user
+install_firefox "$VNC_USER"
 
 # Check if NoVNC is installed
 if [ ! -d "/usr/share/novnc" ] && [ ! -d "/opt/novnc" ]; then
@@ -127,8 +201,11 @@ cat > "$VNC_USER_HOME/.vnc/xstartup" << 'EOF'
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
 
-# Set display manually to :1 (karena kamu pakai :1)
+# Set display manually to :1
 export DISPLAY=:1
+
+# Start Firefox in the background
+[ -x "$(command -v firefox)" ] && firefox &
 
 # Start LXDE
 if command -v startlxde &> /dev/null; then
@@ -136,7 +213,6 @@ if command -v startlxde &> /dev/null; then
 else
     exec lxsession
 fi
-
 EOF
 chmod +x "$VNC_USER_HOME/.vnc/xstartup"
 chown $VNC_USER:$VNC_USER "$VNC_USER_HOME/.vnc/xstartup"
@@ -151,6 +227,7 @@ clean_x_processes() {
     pkill -9 -f "vnc.*:$DISPLAY_NUMBER" || true
     pkill -9 -f "X.*:$DISPLAY_NUMBER" || true
     pkill -9 -f "/usr/bin/X" || true
+    pkill -9 -f firefox || true
 
     # Remove lock files
     rm -f /tmp/.X$DISPLAY_NUMBER-lock || true
@@ -194,7 +271,6 @@ TimeoutStartSec=60
 
 [Install]
 WantedBy=multi-user.target
-
 EOF
 
 # Create systemd service for NoVNC
@@ -254,6 +330,7 @@ pkill -9 -f Xvnc || true
 pkill -9 -f "vnc.*:1" || true
 pkill -9 -f "X.*:1" || true
 pkill -9 -f "/usr/bin/X" || true
+pkill -9 -f firefox || true
 
 echo "Removing lock files..."
 rm -f /tmp/.X1-lock || true
@@ -313,3 +390,5 @@ echo "  - Stop VNC: systemctl stop vncserver@$DISPLAY_NUMBER.service"
 echo "  - Start NoVNC: systemctl start novnc.service"
 echo "  - Stop NoVNC: systemctl stop novnc.service"
 echo "  - Check status: systemctl status vncserver@$DISPLAY_NUMBER.service novnc.service"
+echo ""
+echo "Firefox has been installed and will start automatically with your VNC session"
