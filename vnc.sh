@@ -13,6 +13,22 @@ print_message() {
     echo "======================================================="
 }
 
+# Function to get public IP
+get_public_ip() {
+    # Try multiple methods to get public IP
+    PUBLIC_IP=$(curl -s --max-time 3 https://ifconfig.me/ip || \
+                curl -s --max-time 3 https://api.ipify.org || \
+                curl -s --max-time 3 https://ipinfo.io/ip || \
+                hostname -I | awk '{print $1}')
+    
+    # If we couldn't get public IP, fall back to local IP
+    if [[ -z "$PUBLIC_IP" || "$PUBLIC_IP" =~ ^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.) ]]; then
+        PUBLIC_IP=$(hostname -I | awk '{print $1}')
+    fi
+    
+    echo "$PUBLIC_IP"
+}
+
 # Check if running as root
 if [ "$(id -u)" -ne 0 ]; then
     echo "This script must be run as root or with sudo privileges."
@@ -42,17 +58,17 @@ if command -v apt-get &> /dev/null; then
     PKG_MANAGER="apt-get"
     PKG_UPDATE="apt-get update"
     PKG_INSTALL="apt-get install -y"
-    PACKAGES="tigervnc-standalone-server tigervnc-common novnc websockify git python3 python3-pip net-tools lxde-core lxterminal"
+    PACKAGES="tigervnc-standalone-server tigervnc-common novnc websockify git python3 python3-pip net-tools lxde-core lxterminal curl"
 elif command -v dnf &> /dev/null; then
     PKG_MANAGER="dnf"
     PKG_UPDATE="dnf check-update"
     PKG_INSTALL="dnf install -y"
-    PACKAGES="tigervnc-server novnc websockify git python3 python3-pip lxde lxterminal"
+    PACKAGES="tigervnc-server novnc websockify git python3 python3-pip lxde lxterminal curl"
 elif command -v yum &> /dev/null; then
     PKG_MANAGER="yum"
     PKG_UPDATE="yum check-update"
     PKG_INSTALL="yum install -y"
-    PACKAGES="tigervnc-server novnc websockify git python3 python3-pip lxde lxterminal"
+    PACKAGES="tigervnc-server novnc websockify git python3 python3-pip lxde lxterminal curl"
 else
     echo "Unsupported package manager. This script supports apt, dnf, and yum."
     exit 1
@@ -73,14 +89,14 @@ fi
 # Check if NoVNC is installed
 if [ ! -d "/usr/share/novnc" ] && [ ! -d "/opt/novnc" ]; then
     print_message "Installing NoVNC..."
-    
+
     # If NoVNC wasn't installed through package manager, get it from GitHub
     if [ ! -d "/usr/share/novnc" ]; then
         print_message "Installing NoVNC from GitHub..."
         if [ ! -d "/opt/novnc" ]; then
             git clone https://github.com/novnc/noVNC.git /opt/novnc
         fi
-        
+
         if [ ! -d "/opt/websockify" ]; then
             git clone https://github.com/novnc/websockify.git /opt/websockify
         fi
@@ -128,22 +144,22 @@ chown $VNC_USER:$VNC_USER "$VNC_USER_HOME/.vnc/xstartup"
 # Function to completely clean up X server and VNC processes
 clean_x_processes() {
     print_message "Performing thorough cleanup of X and VNC processes..."
-    
+
     # Kill any running VNC server or X processes
     pkill -9 -f Xtigervnc || true
     pkill -9 -f Xvnc || true
     pkill -9 -f "vnc.*:$DISPLAY_NUMBER" || true
     pkill -9 -f "X.*:$DISPLAY_NUMBER" || true
     pkill -9 -f "/usr/bin/X" || true
-    
+
     # Remove lock files
     rm -f /tmp/.X$DISPLAY_NUMBER-lock || true
     rm -f /tmp/.X11-unix/X$DISPLAY_NUMBER || true
-    
+
     # Clean up user's VNC files
     rm -f $VNC_USER_HOME/.vnc/*:$DISPLAY_NUMBER.pid || true
     rm -f $VNC_USER_HOME/.vnc/*.log || true
-    
+
     # Give processes time to fully terminate
     sleep 2
 }
@@ -160,14 +176,14 @@ After=network.target
 
 [Service]
 Type=simple
-User=robby
-Group=robby
-WorkingDirectory=/home/robby
+User=$VNC_USER
+Group=$VNC_USER
+WorkingDirectory=$VNC_USER_HOME
 PAMName=login
 
 # Skip aggressive pre-start cleanup
 ExecStartPre=/bin/sh -c 'rm -f /tmp/.X%i-lock /tmp/.X11-unix/X%i'
-ExecStartPre=/bin/sh -c 'rm -f /home/robby/.vnc/*:%i.pid /home/robby/.vnc/*.log'
+ExecStartPre=/bin/sh -c 'rm -f $VNC_USER_HOME/.vnc/*:%i.pid $VNC_USER_HOME/.vnc/*.log'
 ExecStartPre=/bin/sleep 1
 
 # Start command - running in foreground
@@ -284,11 +300,11 @@ elif command -v ufw &> /dev/null; then
 fi
 
 # Get server IP for information
-SERVER_IP=$(hostname -I | awk '{print $1}')
+PUBLIC_IP=$(get_public_ip)
 
 print_message "Installation complete!"
 echo "VNC Server is running on port $VNC_PORT"
-echo "NoVNC is accessible at http://$SERVER_IP:$NOVNC_PORT/vnc.html"
+echo "NoVNC is accessible at http://$PUBLIC_IP:$NOVNC_PORT/vnc.html"
 echo "Connect to VNC using the password you provided"
 echo ""
 echo "To manage the services:"
